@@ -98,13 +98,25 @@
     const recentes = antes.filter(r => r.data >= somaDias(inicio, -28));
     const fatorChuva = aprenderFatorChuva(antes.filter(r => r.data >= somaDias(inicio, -90)));
 
+    // Média de cada dia da semana nas últimas 4 semanas; se tiver pouco, olha até 8 semanas.
+    const normaisDe = (w, dias) => antes
+      .filter(r => r.data >= somaDias(inicio, -dias) && diaSemana(r.data) === w && !feriado(r.data) && r.clima !== "chuva")
+      .map(r => r.vendidos);
     const porDia = [0, 1, 2, 3, 4, 5, 6].map(w => {
-      const xs = recentes.filter(r => diaSemana(r.data) === w && !feriado(r.data) && r.clima !== "chuva").map(r => r.vendidos);
+      let xs = normaisDe(w, 28);
+      if (xs.length < 2) xs = normaisDe(w, 56).slice(-2);
       return xs.length >= 2 ? media(xs) : null;
     });
 
+    // Semanas inteiras anotadas dia a dia também valem como vendas da semana.
+    const porSemana = {};
+    antes.forEach(r => { const s = segundaDaSemana(r.data); (porSemana[s] = porSemana[s] || []).push(r.vendidos); });
+    const semanasDoDiario = Object.keys(porSemana).sort().filter(s => porSemana[s].length === 7)
+      .map(s => porSemana[s].reduce((a, b) => a + b, 0));
+    const reaisUsadas = vendasReais.length >= SEMANAS_PARA_USAR_HISTORICO ? vendasReais : vendasReais.concat(semanasDoDiario);
+
     let fonte, base;
-    const historico = demandaPorHistorico(vendasReais);
+    const historico = demandaPorHistorico(reaisUsadas);
     if (porDia.every(v => v != null)) {
       fonte = "diario";
       base = porDia;
@@ -157,11 +169,13 @@
     const ss = semanas.filter(r => r.temAnterior && (!desde || r.data >= desde));
     const comVendas = ss.filter(r => r.vendas != null);
     const vendidos = comVendas.reduce((a, r) => a + r.vendas, 0);
-    const comprados = ss.reduce((a, r) => a + (r.comprados || 0), 0);
+    // Semana lançada à mão sem o número de comprados: considera vendidos + estragados.
+    const compradosDe = r => r.comprados ?? ((r.vendas || 0) + (r.estragados || 0));
+    const comprados = ss.reduce((a, r) => a + compradosDe(r), 0);
     const estragados = ss.reduce((a, r) => a + (r.estragados || 0), 0);
     const faturamento = vendidos * config.precoCentavos;
     const gastoCompras = comprados * config.custoCentavos;
-    const noPonto = comVendas.filter(r => !r.faltou && r.estragados <= Math.max(3, Math.round(r.comprados * 0.03))).length;
+    const noPonto = comVendas.filter(r => !r.faltou && r.estragados <= Math.max(3, Math.round(compradosDe(r) * 0.03))).length;
 
     const dd = diario.filter(r => (!desde || r.data >= desde) && Number.isFinite(r.vendidos));
     const porDia = [0, 1, 2, 3, 4, 5, 6].map(w => {

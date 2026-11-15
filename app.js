@@ -78,6 +78,7 @@
     const h = Dados.semanas();
     return h.length && h[h.length - 1].data === hoje() ? h[h.length - 1] : null;
   }
+  const ultimoPedidoReal = () => Dados.semanas().filter(r => !r.importado).slice(-1)[0];
   const vendasReais = rs => rs.filter(r => r.vendas != null).map(r => r.vendas);
   function chancesDeChuva() { const c = Dados.clima(); return c ? c.dias : {}; }
   function proximaSegunda() {
@@ -104,7 +105,7 @@
 
   // Estoque estimado agora: o da última segunda + entrega de terça − vendas anotadas.
   function estoqueEstimado() {
-    const ult = Dados.semanas().slice(-1)[0];
+    const ult = ultimoPedidoReal();
     if (!ult) return null;
     let est = ult.estoque;
     if (CC.somaDias(ult.data, 1) <= hoje()) est += ult.sugerido;
@@ -122,20 +123,22 @@
   function telaInicio() {
     const diario = Dados.diario();
     const anotadoHoje = diario.find(r => r.data === hoje());
-    const ult = Dados.semanas().slice(-1)[0];
+    const ult = ultimoPedidoReal();
+    const temAlgo = Dados.semanas().length || diario.length;
     const ehSegunda = CC.diaSemana(hoje()) === 1;
     const pedidoHoje = registroDeHoje();
     let html = `<h1>${saudacao()}</h1>`;
 
     // 1. A tarefa principal do dia (uma só, bem grande)
-    if (!ult && !diario.length) {
+    if (!ult) {
       html += `
         <div class="tarefa">
           <div class="tarefa-emoji">👋</div>
           <div class="tarefa-titulo">Bem-vindo ao Coco Certo</div>
-          <p>Toda segunda, o app diz quantos cocos comprar na terça. Comece pelo primeiro pedido.</p>
+          <p>Toda segunda, o app diz quantos cocos comprar na terça.${temAlgo ? " Seu histórico já está aqui. Agora faça o primeiro pedido." : ""}</p>
           <button class="botao amarelo" data-acao="ir-pedido">🛒 Fazer o primeiro pedido</button>
-          <button class="link-botao" data-acao="carregar-exemplo">Prefiro ver um exemplo antes</button>
+          <button class="link-botao" data-acao="ir-historico">${temAlgo ? "Colocar mais histórico" : "Já tenho vendas anotadas: colocar meu histórico"}</button>
+          ${temAlgo ? "" : `<button class="link-botao" data-acao="carregar-exemplo">Prefiro ver um exemplo antes</button>`}
         </div>`;
     } else if (ehSegunda && !pedidoHoje) {
       html += `
@@ -221,7 +224,8 @@
   // =====================================================================
   function contextoPedido() {
     const anteriores = semanasAnteriores();
-    const anterior = anteriores[anteriores.length - 1];
+    const ultimoReg = anteriores[anteriores.length - 1];
+    const anterior = ultimoReg && !ultimoReg.importado ? ultimoReg : null; // semana lançada à mão não tem estoque
     const deHoje = registroDeHoje();
     const ultimo = deHoje || anterior;
     const reais = vendasReais(anteriores);
@@ -471,7 +475,7 @@
       const maior = Math.max(...comVendas.map(r => r.vendas));
       html += `<div class="cartao grafico"><div class="titulo-cartao">Cocos vendidos por semana</div>
         ${comVendas.map(r => {
-          const ini = inicioDa.get(r.data);
+          const ini = r.importado ? r.data : inicioDa.get(r.data);
           return `<div class="barra-linha"><div class="rotulo-barra">${CC.dataCurta(ini)}</div>
             <div class="barra${r.faltou ? " faltou" : ""}" style="width:${Math.max(28, Math.round(100 * r.vendas / maior))}%">${r.vendas}</div></div>`;
         }).join("")}
@@ -505,11 +509,12 @@
       ${lista.map(r => {
         let etiqueta = "";
         if (r.faltou) etiqueta = `<span class="etiqueta vermelha">faltou coco</span>`;
-        else if (r.vendas != null && r.estragados <= Math.max(3, Math.round(r.comprados * 0.03))) etiqueta = `<span class="etiqueta verde">no ponto</span>`;
+        else if (r.vendas != null && r.comprados != null && r.estragados <= Math.max(3, Math.round(r.comprados * 0.03))) etiqueta = `<span class="etiqueta verde">no ponto</span>`;
         return `<div class="semana"><div class="data">${CC.NOMES_DIAS[CC.diaSemana(r.data)]}, ${CC.dataCurta(r.data)}${etiqueta}</div>
-          ${r.vendas != null ? `<div>Vendeu na semana anterior: <b>${r.vendas}</b></div>` : r.temAnterior ? "<div>Números não bateram</div>" : "<div>Primeiro pedido</div>"}
-          ${r.temAnterior ? `<div>Comprou ${r.comprados} · estragaram ${r.estragados}</div>` : ""}
-          <div>Sugestão de compra: <b>${r.sugerido}</b></div></div>`;
+          ${r.importado ? `<div>Lançada por você: vendeu <b>${r.vendas}</b> na semana</div>`
+            : r.vendas != null ? `<div>Vendeu na semana anterior: <b>${r.vendas}</b></div>` : r.temAnterior ? "<div>Números não bateram</div>" : "<div>Primeiro pedido</div>"}
+          ${r.temAnterior ? `<div>Comprou ${r.comprados ?? "?"} · estragaram ${r.estragados}</div>` : ""}
+          ${r.sugerido != null ? `<div>Sugestão de compra: <b>${r.sugerido}</b></div>` : ""}</div>`;
       }).join("")}</details>`;
 
     html += `<button class="botao verde" data-acao="compartilhar-relatorio">📤 Mandar relatório no WhatsApp</button>`;
@@ -541,6 +546,9 @@
     const ios = /iPhone|iPad|iPod/.test(navigator.userAgent);
     const instalado = window.matchMedia("(display-mode: standalone)").matches || navigator.standalone;
     return `<h1>Ajustes</h1>
+      <div class="cartao tarefa-clara"><div class="titulo-cartao"><span class="emoji">📥</span>Colocar meu histórico</div>
+        <p>Já tem vendas anotadas num caderno ou planilha? Coloque aqui para o app acertar mais desde o começo.</p>
+        <button class="botao" data-acao="ir-historico">📥 Colocar meu histórico</button></div>
       <div class="grade">
       <div class="cartao"><div class="titulo-cartao"><span class="emoji">🔠</span>Tamanho da letra</div>
         ${escolha("letra", [["1", "Normal", "A"], ["1.15", "Grande", "A+"], ["1.3", "Maior", "A++"]], String(config.letra || 1))}
@@ -612,6 +620,111 @@
   }
 
   // =====================================================================
+  // COLOCAR MEU HISTÓRICO — vendas que o vendedor já tinha anotado
+  // =====================================================================
+  function telaHistorico() {
+    const modo = estado.modoHist || "dia";
+    let html = `<div class="estreito">
+      <button class="link-botao voltar-link" data-acao="ir-ajustes">← Voltar aos ajustes</button>
+      <h1>Colocar meu histórico</h1>
+      <p>Quanto mais vendas o app conhecer, mais certa fica a sugestão. Coloque o que você tiver anotado, do jeito que for mais fácil:</p>
+      <div class="chips">${[["dia", "Por dia"], ["semana", "Por semana"], ["planilha", "Planilha"]].map(([m, t]) =>
+        `<button type="button" data-acao="modo-hist" data-modo="${m}" class="${modo === m ? "marcado" : ""}">${t}</button>`).join("")}</div>`;
+    if (modo === "dia") html += historicoPorDia();
+    else if (modo === "semana") html += historicoPorSemana();
+    else html += historicoPorPlanilha();
+    return html + `</div>`;
+  }
+
+  function historicoPorDia() {
+    const diario = Dados.diario();
+    const data = estado.dataHist || CC.somaDias(hoje(), -1);
+    const reg = diario.find(r => r.data === data);
+    return `
+      <div class="cartao">
+        <div class="campo"><label for="data-hist">Qual dia?</label>
+          <input id="data-hist" type="date" class="grande-select" max="${hoje()}" value="${data}"></div>
+        <p class="nota" style="margin:-4px 0 14px">${CC.NOMES_DIAS[CC.diaSemana(data)]}, ${CC.dataCurta(data)}/${data.slice(0, 4)}${reg ? ` · já anotado: <b>${reg.vendidos}</b> cocos` : ""}</p>
+        ${campoNumero("vendidos-hist", "Quantos cocos vendeu nesse dia?", reg ? reg.vendidos : 0)}
+        <div class="campo"><span class="pergunta">Como estava o tempo?</span>
+          ${escolha("clima-hist", [["sol", "Sol", "☀️"], ["nublado", "Nublado", "⛅"], ["chuva", "Chuva", "🌧️"], ["", "Não sei", "❔"]], reg ? (reg.clima || "") : "")}</div>
+        <button class="botao verde" data-acao="salvar-dia-hist">💾 Salvar e ir para o próximo dia</button>
+      </div>
+      ${diario.length ? `<p class="nota">Você tem <b>${diario.length}</b> dias anotados, de ${CC.dataCurta(diario[0].data)}/${diario[0].data.slice(0, 4)} até ${CC.dataCurta(diario[diario.length - 1].data)}/${diario[diario.length - 1].data.slice(0, 4)}.</p>` : ""}`;
+  }
+
+  function historicoPorSemana() {
+    const limite = Dados.limiteSemanas();
+    const maximo = limite ? CC.somaDias(limite, -1) : hoje();
+    const data = estado.dataSemanaHist || CC.somaDias(CC.segundaDaSemana(maximo), -7);
+    const seg = CC.segundaDaSemana(data);
+    const ja = Dados.semanas().find(r => r.importado && r.data === seg);
+    const importadas = Dados.semanas().filter(r => r.importado).reverse();
+    return `
+      ${limite ? `<div class="status">Dá para lançar semanas até antes do seu primeiro pedido no app (${CC.dataCurta(limite)}). Depois disso, o app já guarda sozinho.</div>` : ""}
+      <div class="cartao">
+        <div class="campo"><label for="data-semana">Escolha um dia da semana</label>
+          <input id="data-semana" type="date" class="grande-select" max="${maximo}" value="${data}"></div>
+        <p class="nota" style="margin:-4px 0 14px">Semana de segunda ${CC.dataCurta(seg)} a domingo ${CC.dataCurta(CC.somaDias(seg, 6))}${ja ? " · já lançada" : ""}</p>
+        ${campoNumero("vendidos-sem", "Quantos cocos vendeu na semana?", ja ? ja.vendas : 0)}
+        ${campoNumero("comprados-sem", "Quantos comprou? (se não souber, deixe 0)", ja && ja.comprados != null ? ja.comprados : 0)}
+        ${campoNumero("estragados-sem", "Quantos estragaram?", ja ? ja.estragados : 0)}
+        <div class="campo"><span class="pergunta">Faltou coco?</span>
+          ${escolha("faltou-sem", [["nao", "Não"], ["sim", "Sim"]], ja && ja.faltou ? "sim" : "nao")}</div>
+        <button class="botao verde" data-acao="salvar-semana-hist">💾 Salvar e ir para a semana anterior</button>
+      </div>
+      ${importadas.length ? `<div class="cartao"><div class="titulo-cartao">Semanas lançadas por você</div>
+        ${importadas.map(r => `<div class="linha"><span>${CC.dataCurta(r.data)}/${r.data.slice(2, 4)} · <b>${r.vendas}</b> vendidos${r.faltou ? " · faltou" : ""}</span>
+          <button class="botao-icone" data-acao="apagar-semana-hist" data-data="${r.data}" aria-label="Apagar semana de ${CC.dataCurta(r.data)}">🗑️</button></div>`).join("")}
+      </div>` : ""}`;
+  }
+
+  function historicoPorPlanilha() {
+    const tipo = estado.tipoPlanilha || "dia";
+    const leitura = estado.leitura;
+    let html = `
+      <div class="cartao">
+        <p>Cole as suas anotações ou uma planilha. Basta <b>uma linha para cada ${tipo === "dia" ? "dia" : "semana"}</b>, com a data e a quantidade. Por exemplo:</p>
+        <pre class="exemplo">${tipo === "dia" ? "10/11 32 sol\n11/11 18 chuva\n12/11 25" : "03/11 180 190 6\n27/10 175 185 4 faltou"}</pre>
+        ${tipo === "semana" ? `<p class="nota">Na ordem: data, vendidos, comprados, estragados. Escreva "faltou" se faltou coco.</p>` : `<p class="nota">O tempo (sol, nublado, chuva) é opcional.</p>`}
+        <div class="campo" style="margin-top:14px"><span class="pergunta">Cada linha é:</span>
+          ${escolha("tipo-planilha", [["dia", "Um dia"], ["semana", "Uma semana"]], tipo)}</div>
+        <div class="campo"><label for="texto-planilha">Cole aqui</label>
+          <textarea id="texto-planilha" rows="7" placeholder="10/11 32 sol">${(estado.textoPlanilha || "").replace(/</g, "&lt;")}</textarea></div>
+        <button class="botao secundario pequeno" data-acao="escolher-planilha">📎 Ou escolher um arquivo (CSV)</button>
+        <input id="arquivo-planilha" type="file" accept=".csv,.txt,text/csv,text/plain" hidden>
+        <button class="botao" data-acao="ler-planilha">🔍 Conferir</button>
+        <button class="link-botao" data-acao="modelo-planilha">Baixar modelo de planilha</button>
+      </div>`;
+    if (leitura) {
+      const itens = leitura.itens;
+      const ordenados = itens.slice().sort((a, b) => a.data.localeCompare(b.data));
+      html += `<div class="cartao ${itens.length ? "sucesso" : ""}">
+        <div class="titulo-cartao"><span class="emoji">${itens.length ? "✅" : "🤔"}</span>${itens.length
+          ? `Entendi ${itens.length} ${tipo === "dia" ? (itens.length === 1 ? "dia" : "dias") : (itens.length === 1 ? "semana" : "semanas")}`
+          : "Não entendi nenhuma linha"}</div>
+        ${itens.length ? `<p>De ${CC.dataCurta(ordenados[0].data)}/${ordenados[0].data.slice(0, 4)} a ${CC.dataCurta(ordenados[ordenados.length - 1].data)}/${ordenados[ordenados.length - 1].data.slice(0, 4)}, total de <b>${itens.reduce((a, r) => a + r.vendidos, 0)}</b> cocos vendidos.</p>
+          ${ordenados.slice(-6).reverse().map(r => `<div class="linha"><span>${CC.DIAS_CURTOS[CC.diaSemana(r.data)]} ${CC.dataCurta(r.data)}/${r.data.slice(2, 4)} ${r.clima ? EMOJI_CLIMA[r.clima] : ""}${r.faltou ? " · faltou" : ""}</span><b>${r.vendidos}</b></div>`).join("")}
+          ${itens.length > 6 ? `<p class="nota">… e mais ${itens.length - 6}.</p>` : ""}` : ""}
+        ${leitura.erros.length ? `<div class="alerta" style="margin-top:12px">${leitura.erros.length} ${leitura.erros.length === 1 ? "linha ficou" : "linhas ficaram"} de fora:<br>${leitura.erros.slice(0, 5).map(e =>
+            `Linha ${e.linha}: “${e.texto.slice(0, 30).replace(/</g, "&lt;")}” — ${e.motivo}`).join("<br>")}</div>` : ""}
+        ${itens.length ? `<button class="botao verde" data-acao="salvar-planilha">💾 Salvar ${itens.length} ${tipo === "dia" ? "dias" : "semanas"}</button>` : ""}
+      </div>`;
+    }
+    return html;
+  }
+
+  function lerArquivoPlanilha(arquivo) {
+    const leitor = new FileReader();
+    leitor.onload = () => {
+      estado.textoPlanilha = String(leitor.result);
+      estado.leitura = Dados.lerTexto(estado.textoPlanilha, estado.tipoPlanilha || "dia");
+      mostrar("historico", { topo: false });
+    };
+    leitor.readAsText(arquivo);
+  }
+
+  // =====================================================================
   // NAVEGAÇÃO E AÇÕES
   // =====================================================================
   function novoPedido() {
@@ -620,13 +733,14 @@
     estado.passo = 0;
   }
 
-  const TELAS = { inicio: telaInicio, pedido: telaPedido, relatorio: telaRelatorio, ajustes: telaAjustes };
+  const TELAS = { inicio: telaInicio, pedido: telaPedido, relatorio: telaRelatorio, ajustes: telaAjustes, historico: telaHistorico };
 
   function mostrar(tela, { topo = true } = {}) {
     estado.tela = tela;
     conteudo.innerHTML = `<div class="entrar">${TELAS[tela]()}</div>`;
     document.querySelectorAll(".abas button").forEach(b => {
-      if (b.dataset.tela === tela) b.setAttribute("aria-current", "page"); else b.removeAttribute("aria-current");
+      const aba = tela === "historico" ? "ajustes" : tela;
+      if (b.dataset.tela === aba) b.setAttribute("aria-current", "page"); else b.removeAttribute("aria-current");
     });
     if (topo) window.scrollTo(0, 0);
   }
@@ -650,6 +764,63 @@
       mostrar("inicio");
     },
     calcular,
+    "ir-historico": () => mostrar("historico"),
+    "ir-ajustes": () => mostrar("ajustes"),
+    "modo-hist": b => { estado.modoHist = b.dataset.modo; estado.leitura = null; mostrar("historico", { topo: false }); },
+    "salvar-dia-hist": () => {
+      const data = $("data-hist").value;
+      if (!data || data > hoje()) { avisar("Escolha um dia que já passou"); return; }
+      const n = lerNumero("vendidos-hist");
+      Dados.anotarDia(data, n, valorEscolha("clima-hist") || null);
+      avisar(`Salvo: ${n} cocos em ${CC.dataCurta(data)}`);
+      const prox = CC.somaDias(data, 1);
+      estado.dataHist = prox <= hoje() ? prox : data;
+      mostrar("historico", { topo: false });
+    },
+    "salvar-semana-hist": () => {
+      const data = $("data-semana").value;
+      const vendidos = lerNumero("vendidos-sem");
+      if (!data) { avisar("Escolha a semana"); return; }
+      if (!vendidos) { avisar("Coloque quantos cocos vendeu"); return; }
+      const res = Dados.importarSemanas([{
+        data, vendidos, comprados: lerNumero("comprados-sem") || null,
+        estragados: lerNumero("estragados-sem"), faltou: valorEscolha("faltou-sem") === "sim",
+      }]);
+      if (res.recusadas.length) { avisar("Essa semana já é do tempo do app"); return; }
+      avisar(`Semana de ${CC.dataCurta(CC.segundaDaSemana(data))} salva`);
+      estado.dataSemanaHist = CC.somaDias(CC.segundaDaSemana(data), -7);
+      mostrar("historico", { topo: false });
+    },
+    "apagar-semana-hist": b => {
+      if (!confirm(`Apagar a semana de ${CC.dataCurta(b.dataset.data)}?`)) return;
+      Dados.apagarSemanaImportada(b.dataset.data);
+      mostrar("historico", { topo: false });
+    },
+    "escolher-planilha": () => $("arquivo-planilha").click(),
+    "ler-planilha": () => {
+      estado.textoPlanilha = $("texto-planilha").value;
+      estado.leitura = Dados.lerTexto(estado.textoPlanilha, estado.tipoPlanilha || "dia");
+      mostrar("historico", { topo: false });
+    },
+    "salvar-planilha": () => {
+      const { itens } = estado.leitura;
+      if ((estado.tipoPlanilha || "dia") === "dia") {
+        const n = Dados.importarDias(itens);
+        avisar(`${n} dias salvos`);
+      } else {
+        const res = Dados.importarSemanas(itens);
+        avisar(res.recusadas.length ? `${res.salvas} semanas salvas; ${res.recusadas.length} ficaram de fora (depois do primeiro pedido)` : `${res.salvas} semanas salvas`);
+      }
+      estado.leitura = null; estado.textoPlanilha = "";
+      mostrar("historico", { topo: false });
+    },
+    "modelo-planilha": () => {
+      const tipo = estado.tipoPlanilha || "dia";
+      const csv = tipo === "dia"
+        ? "data;vendidos;tempo\n10/11/2026;32;sol\n11/11/2026;18;chuva\n12/11/2026;25;nublado\n"
+        : "semana (segunda);vendidos;comprados;estragados;faltou\n03/11/2026;180;190;6;sim\n27/10/2026;175;185;4;não\n";
+      baixar(new Blob(["\ufeff" + csv], { type: "text/csv" }), `modelo-coco-certo-${tipo}.csv`);
+    },
     explicar: () => { estado.etapaPedido = "explicacao"; mostrar("pedido"); },
     "voltar-resultado": () => { estado.etapaPedido = "resultado"; mostrar("pedido"); },
     refazer: () => { estado.etapaPedido = "registro"; estado.passo = 0; mostrar("pedido"); },
@@ -714,6 +885,11 @@
     const opcao = e.target.closest(".escolha [data-valor]:not([data-acao])");
     if (opcao) {
       opcao.parentElement.querySelectorAll("button").forEach(b => b.classList.toggle("marcado", b === opcao));
+      if (opcao.parentElement.dataset.grupo === "tipo-planilha") {
+        estado.tipoPlanilha = opcao.dataset.valor; estado.leitura = null;
+        estado.textoPlanilha = $("texto-planilha").value;
+        mostrar("historico", { topo: false });
+      }
       if (opcao.parentElement.dataset.grupo === "letra") {
         Dados.salvarConfig(Object.assign(Dados.config(), { letra: Number(opcao.dataset.valor) }));
         aplicarLetra();
@@ -731,6 +907,9 @@
     e.target.value = e.target.dataset.decimal ? e.target.value.replace(/[^\d,]/g, "") : e.target.value.replace(/\D/g, "");
   });
   document.addEventListener("change", e => {
+    if (e.target.id === "data-hist") { estado.dataHist = e.target.value; mostrar("historico", { topo: false }); }
+    if (e.target.id === "data-semana") { estado.dataSemanaHist = e.target.value; mostrar("historico", { topo: false }); }
+    if (e.target.id === "arquivo-planilha" && e.target.files[0]) { lerArquivoPlanilha(e.target.files[0]); e.target.value = ""; }
     if (e.target.id === "dia-anotar") {
       estado.diaAnotar = e.target.value;
       mostrar("inicio", { topo: false });

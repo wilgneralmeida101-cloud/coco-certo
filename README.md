@@ -5,6 +5,7 @@ Aplicativo para celular que ajuda um vendedor de água de coco da Praia do Futur
 - **Início:** anotar as vendas do dia e o tempo; resumo da semana; previsão do tempo.
 - **Pedido:** poucas perguntas, uma por tela, e a quantidade sugerida para comprar na terça, com a conta explicada.
 - **Relatório:** vendas, gastos, perdas com cocos estragados, melhores dias e efeito da chuva.
+- **Colocar meu histórico:** lançar vendas antigas por dia, por semana ou colando uma planilha (CSV).
 - **Ajustes:** preços, tamanho da letra, lembrete na agenda, cópia de segurança, dados de exemplo.
 
 Funciona sem internet depois de aberto uma vez e pode ser instalado na tela inicial. Os dados ficam só no celular de quem usa.

@@ -17,7 +17,7 @@
 
   const Dados = {
     semanas: () => { const v = ler(CHAVES.semanas, []); return Array.isArray(v) ? v : []; },
-    salvarSemanas: v => gravar(CHAVES.semanas, v),
+    salvarSemanas: v => gravar(CHAVES.semanas, v.slice().sort((a, b) => a.data.localeCompare(b.data))),
     diario: () => { const v = ler(CHAVES.diario, []); return Array.isArray(v) ? v : []; },
     salvarDiario: v => gravar(CHAVES.diario, v.slice().sort((a, b) => a.data.localeCompare(b.data))),
     config: () => Object.assign({}, CONFIG_PADRAO, ler(CHAVES.config, {})),
@@ -42,7 +42,7 @@
       const d = JSON.parse(texto);
       if (!d || d.app !== "coco-certo") throw new Error("não é cópia do Coco Certo");
       const semanas = d.semanas || d.historico;
-      const ok = Array.isArray(semanas) && semanas.every(r => r && typeof r.data === "string" && Number.isFinite(r.estoque));
+      const ok = Array.isArray(semanas) && semanas.every(r => r && typeof r.data === "string" && (r.importado || Number.isFinite(r.estoque)));
       if (!ok) throw new Error("cópia com defeito");
       return { semanas, diario: Array.isArray(d.diario) ? d.diario : [], config: d.config || null };
     },
@@ -52,8 +52,81 @@
       if (config) Dados.salvarConfig(Object.assign({}, CONFIG_PADRAO, config));
     },
 
+    // ---------- histórico que o vendedor já tinha anotado ----------
+    // Semanas lançadas à mão só podem vir antes do primeiro pedido feito no app,
+    // porque a conta de cada pedido usa o estoque da segunda anterior.
+    limiteSemanas() {
+      const real = Dados.semanas().find(r => !r.importado);
+      return real ? real.data : null;
+    },
+    importarDias(dias) {
+      const novos = new Map(dias.map(d => [d.data, d]));
+      Dados.salvarDiario(Dados.diario().filter(r => !novos.has(r.data)).concat([...novos.values()]));
+      return novos.size;
+    },
+    importarSemanas(semanas) {
+      const limite = Dados.limiteSemanas();
+      const aceitas = new Map(), recusadas = [];
+      semanas.forEach(w => {
+        const data = CC.segundaDaSemana(w.data);
+        if (limite && data >= limite) { recusadas.push(w); return; }
+        aceitas.set(data, {
+          data, importado: true, temAnterior: true, vendas: w.vendidos,
+          comprados: w.comprados ?? null, estragados: w.estragados || 0, faltou: !!w.faltou,
+          estoque: null, sugerido: null, util: 0, fds: 0,
+        });
+      });
+      const resto = Dados.semanas().filter(r => !aceitas.has(r.data));
+      Dados.salvarSemanas(resto.concat([...aceitas.values()]));
+      return { salvas: aceitas.size, recusadas };
+    },
+    apagarSemanaImportada(data) {
+      Dados.salvarSemanas(Dados.semanas().filter(r => !(r.importado && r.data === data)));
+    },
+
+    lerTexto,
     gerarExemplo,
   };
+
+  // Entende linhas coladas de anotações ou planilhas (CSV do Excel / Google Planilhas).
+  //   modo "dia":    data  vendidos  [sol|nublado|chuva]
+  //   modo "semana": data  vendidos  [comprados]  [estragados]  [faltou]
+  // Aceita datas 10/11, 10/11/26, 10/11/2026, 10-11-2026 e 2026-11-10.
+  function lerTexto(texto, modo, hoje = CC.iso()) {
+    const itens = [], erros = [];
+    texto.split(/\r?\n/).forEach((linhaOriginal, i) => {
+      const linha = linhaOriginal.trim();
+      if (!linha) return;
+      let data = null, resto = linha;
+      let m = linha.match(/(\d{4})-(\d{1,2})-(\d{1,2})/);
+      if (m) {
+        data = dataValida(+m[1], +m[2], +m[3]);
+      } else if ((m = linha.match(/(\d{1,2})[\/.-](\d{1,2})(?:[\/.-](\d{2,4}))?/))) {
+        let ano = m[3] ? +m[3] : Number(hoje.slice(0, 4));
+        if (ano < 100) ano += 2000;
+        data = dataValida(ano, +m[2], +m[1]);
+        if (data && !m[3] && data > hoje) data = dataValida(ano - 1, +m[2], +m[1]); // sem ano: o mais recente
+      }
+      if (!m) { if (i > 0 || /\d/.test(linha)) erros.push({ linha: i + 1, texto: linha, motivo: "sem data" }); return; }
+      if (!data) { erros.push({ linha: i + 1, texto: linha, motivo: "data inválida" }); return; }
+      if (data > hoje) { erros.push({ linha: i + 1, texto: linha, motivo: "data no futuro" }); return; }
+      resto = linha.replace(m[0], " ");
+      const nums = (resto.match(/\d+/g) || []).map(Number);
+      if (!nums.length) { erros.push({ linha: i + 1, texto: linha, motivo: "sem quantidade" }); return; }
+      const t = resto.toLowerCase();
+      if (modo === "semana") {
+        itens.push({ data, vendidos: nums[0], comprados: nums[1] ?? null, estragados: nums[2] ?? 0, faltou: /falt|\bsim\b/.test(t) });
+      } else {
+        const clima = /chuv/.test(t) ? "chuva" : /nubl/.test(t) ? "nublado" : /\bsol\b/.test(t) ? "sol" : null;
+        itens.push({ data, vendidos: nums[0], clima });
+      }
+    });
+    return { itens, erros };
+  }
+  function dataValida(a, m, d) {
+    const dt = new Date(a, m - 1, d);
+    return dt.getFullYear() === a && dt.getMonth() === m - 1 && dt.getDate() === d ? CC.iso(dt) : null;
+  }
 
   // ---------- dados fictícios: 12 semanas usando o app ----------
   // Simula o vendedor dia a dia: procura do dia (depende do dia da semana, do tempo e de feriados),
