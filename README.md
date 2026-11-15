@@ -1,12 +1,13 @@
 # 🥥 Coco Certo
 
-Aplicativo para celular que ajuda um vendedor de água de coco da Praia do Futuro (Fortaleza) a decidir quantos cocos comprar toda semana, sem chute.
+Aplicativo para celular que ajuda vendedores de água de coco a decidir quantos cocos comprar toda semana, sem chute.
 
 - **Início:** anotar as vendas do dia e o tempo; resumo da semana; previsão do tempo.
 - **Pedido:** poucas perguntas, uma por tela, e a quantidade sugerida para comprar na terça, com a conta explicada.
-- **Relatório:** vendas, gastos, perdas com cocos estragados, melhores dias e efeito da chuva.
+- **Relatório:** vendas, gastos, perdas com cocos estragados e leituras automáticas (melhor dia, efeito da chuva e de feriados, acerto da previsão, tendência).
 - **Colocar meu histórico:** lançar vendas antigas por dia, por semana ou colando uma planilha (CSV).
-- **Ajustes:** preços, tamanho da letra, lembrete na agenda, cópia de segurança, dados de exemplo.
+- **Onde fica a banca:** qualquer cidade (GPS ou busca); previsão do tempo do lugar, feriados nacionais e estaduais, e dias especiais da cidade cadastrados pelo vendedor.
+- **Ajustes:** anotar vendas do dia (opcional), preços, tamanho da letra, lembrete na agenda, cópia de segurança, dados de exemplo.
 
 Funciona sem internet depois de aberto uma vez e pode ser instalado na tela inicial. Os dados ficam só no celular de quem usa.
 

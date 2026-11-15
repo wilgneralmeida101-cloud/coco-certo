@@ -20,6 +20,7 @@
   const NOME_CLIMA = { sol: "Sol", nublado: "Nublado", chuva: "Chuva" };
 
   // ---------- ajudantes ----------
+  const esc = t => String(t ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
   function formatarDecimal(n) { return n.toFixed(2).replace(".", ","); }
   function lerNumero(id) {
     const e = $(id);
@@ -80,25 +81,30 @@
   }
   const ultimoPedidoReal = () => Dados.semanas().filter(r => !r.importado).slice(-1)[0];
   const vendasReais = rs => rs.filter(r => r.vendas != null).map(r => r.vendas);
-  function chancesDeChuva() { const c = Dados.clima(); return c ? c.dias : {}; }
+  function chancesDeChuva() {
+    const c = Dados.clima(), l = Dados.config().local;
+    return c && c.lat === l.lat && c.lon === l.lon ? c.dias : {};
+  }
   function proximaSegunda() {
     const s = CC.segundaDaSemana(hoje());
     return s > hoje() ? s : CC.somaDias(s, 7);
   }
 
   // Previsão do tempo para a Praia do Futuro (Open-Meteo, gratuito, sem cadastro).
-  async function atualizarClima() {
+  async function atualizarClima(forcar = false) {
+    const { lat, lon } = Dados.config().local;
     const c = Dados.clima();
-    if (c && c.buscadoEm === hoje()) return;
+    if (!forcar && c && c.buscadoEm === hoje() && c.lat === lat && c.lon === lon) return;
+    if (lat == null || lon == null) return;
     try {
-      const url = "https://api.open-meteo.com/v1/forecast?latitude=-3.74&longitude=-38.45" +
-        "&daily=precipitation_probability_max&timezone=America%2FFortaleza&forecast_days=10";
+      const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}` +
+        "&daily=precipitation_probability_max&timezone=auto&forecast_days=10";
       const r = await fetch(url, { signal: AbortSignal.timeout(8000) });
       if (!r.ok) return;
       const j = await r.json();
       const dias = {};
       j.daily.time.forEach((d, i) => { dias[d] = j.daily.precipitation_probability_max[i]; });
-      Dados.salvarClima({ buscadoEm: hoje(), dias });
+      Dados.salvarClima({ buscadoEm: hoje(), lat, lon, dias });
       if (estado.tela === "inicio") mostrar("inicio");
     } catch (e) { /* sem internet: segue sem previsão do tempo */ }
   }
@@ -136,6 +142,7 @@
           <div class="tarefa-emoji">👋</div>
           <div class="tarefa-titulo">Bem-vindo ao Coco Certo</div>
           <p>Toda segunda, o app diz quantos cocos comprar na terça.${temAlgo ? " Seu histórico já está aqui. Agora faça o primeiro pedido." : ""}</p>
+          <p class="lugar-banca">📍 Sua banca: <b>${esc(Dados.config().local.nome)}</b> <button class="link-botao inline" data-acao="ir-local">Mudar</button></p>
           <button class="botao amarelo" data-acao="ir-pedido">🛒 Fazer o primeiro pedido</button>
           <button class="link-botao" data-acao="ir-historico">${temAlgo ? "Colocar mais histórico" : "Já tenho vendas anotadas: colocar meu histórico"}</button>
           ${temAlgo ? "" : `<button class="link-botao" data-acao="carregar-exemplo">Prefiro ver um exemplo antes</button>`}
@@ -150,9 +157,16 @@
         </div>`;
     }
 
-    const precisaAnotar = !anotadoHoje || estado.anotandoDia;
-    if (precisaAnotar) {
+    const anotarAtivo = Dados.config().anotarDiario !== false;
+    if (estado.anotandoDia) {
       html += formularioDoDia(diario, anotadoHoje);
+    } else if (!anotadoHoje) {
+      if (anotarAtivo) html += `
+        <div class="cartao opcional">
+          <div class="titulo-cartao"><span class="emoji">📝</span>Anotar as vendas de hoje <span class="etiqueta cinza">opcional</span></div>
+          <p class="nota" style="margin-top:0">Não é obrigatório. Mas, anotando, o app aprende o movimento de cada dia e acerta mais o pedido.</p>
+          <button class="botao secundario pequeno" data-acao="anotar-dia">📝 Anotar agora</button>
+        </div>`;
     } else {
       html += `
         <div class="cartao sucesso">
@@ -164,6 +178,15 @@
 
     // 2. Resumo
     let resumo = "";
+    const ins = CC.insights({ semanas: Dados.semanas(), diario, config: Dados.config(), desde: CC.somaDias(hoje(), -28) }).lista;
+    if (ins.length && ult) {
+      resumo += `
+        <div class="cartao dica-semana">
+          <div class="titulo-cartao"><span class="emoji">💡</span>Dica da semana</div>
+          <div class="dica-linha"><span class="emoji">${ins[0].emoji}</span><span>${ins[0].texto}</span></div>
+          <button class="link-botao" data-acao="ir-relatorio">Ver mais no relatório →</button>
+        </div>`;
+    }
     if (ult) {
       const seg = CC.segundaDaSemana(hoje());
       const vendidosSemana = diario.filter(r => r.data >= seg && r.data <= hoje()).reduce((a, r) => a + r.vendidos, 0);
@@ -172,10 +195,10 @@
         <div class="cartao">
           <div class="titulo-cartao"><span class="emoji">📦</span>Esta semana</div>
           <div class="linha"><span>Vendidos desde segunda</span><b>${vendidosSemana}</b></div>
-          ${est ? `<div class="linha"><span>Cocos no estoque <span class="suave pequeno">(estimado)</span></span><b>${est.valor}</b></div>` : ""}
+          ${est && !est.diasSemAnotar ? `<div class="linha"><span>Cocos no estoque <span class="suave pequeno">(estimado)</span></span><b>${est.valor}</b></div>` : ""}
           <div class="linha"><span>Último pedido <span class="suave pequeno">(${CC.dataCurta(ult.data)})</span></span><b>${ult.sugerido}</b></div>
           <div class="linha"><span>Próximo pedido</span><b>${pedidoHoje ? "feito ✓" : diaComNome(proximaSegunda())}</b></div>
-          ${est && est.diasSemAnotar ? `<p class="nota">⚠️ ${est.diasSemAnotar} ${est.diasSemAnotar === 1 ? "dia" : "dias"} sem anotar vendas. O estoque estimado pode estar alto.</p>` : ""}
+          ${est && est.diasSemAnotar && anotarAtivo && diario.some(r => r.data >= ult.data) ? `<p class="nota">Anote os dias que faltam (${est.diasSemAnotar}) para o app mostrar quantos cocos ainda tem.</p>` : ""}
         </div>`;
     }
     const chances = chancesDeChuva();
@@ -183,7 +206,7 @@
     if (dias.some(d => chances[d] != null)) {
       resumo += `
         <div class="cartao">
-          <div class="titulo-cartao"><span class="emoji">🌤️</span>Tempo na Praia do Futuro</div>
+          <div class="titulo-cartao"><span class="emoji">🌤️</span>Tempo em ${esc(Dados.config().local.nome)}</div>
           <div class="tempo">${dias.map(d => {
             const c = chances[d];
             const em = c == null ? "–" : c >= CC.CHANCE_DE_CHUVA ? "🌧️" : c >= 30 ? "⛅" : "☀️";
@@ -441,29 +464,8 @@
           <div class="linha"><span>Perdido com ${rel.estragados} estragados</span><b style="color:var(--vermelho)">${CC.reais(rel.perdaEstragados)}</b></div></div>
       </div>`;
 
-    // dicas
-    const dicas = [];
-    const comDia = rel.porDia.map((v, w) => [v, w]).filter(([v]) => v != null);
-    if (comDia.length >= 5) {
-      const [mv, mw] = comDia.reduce((a, b) => (b[0] > a[0] ? b : a));
-      const [pv, pw] = comDia.reduce((a, b) => (b[0] < a[0] ? b : a));
-      dicas.push(["🏆", `<b>${CC.NOMES_DIAS[mw]}</b> é seu melhor dia: vende uns ${mv} cocos. O mais fraco é ${CC.NOMES_DIAS[pw].toLowerCase()}, com ${pv}.`]);
-    }
-    if (rel.fatorChuva.aprendido) {
-      dicas.push(["🌧️", `Em dia de chuva você vende cerca de <b>${Math.round((1 - rel.fatorChuva.fator) * 100)}% menos</b>. O app já desconta isso quando a previsão é de chuva.`]);
-    }
-    if (rel.estragados > 0) {
-      dicas.push(["🗑️", `Estragaram <b>${rel.estragados} cocos</b> (${CC.reais(rel.perdaEstragados)}). ${rel.estragados / Math.max(1, rel.numSemanas) > 8 ? "É bastante: guarde os cocos na sombra e venda os mais antigos primeiro." : "Está sob controle."}`]);
-    }
-    dicas.push(rel.faltas
-      ? ["⚠️", `Faltou coco em <b>${rel.faltas} ${rel.faltas === 1 ? "semana" : "semanas"}</b>. Depois de uma falta, o app aumenta a reserva para ${CC.MARGEM_SE_FALTOU}%.`]
-      : ["👏", "Não faltou coco em nenhuma semana deste período."]);
-    const vs = vendasReais(semanas);
-    if (vs.length >= 8) {
-      const a = vs.slice(-4).reduce((x, y) => x + y, 0), b = vs.slice(-8, -4).reduce((x, y) => x + y, 0);
-      const pct = Math.round((a - b) / b * 100);
-      if (Math.abs(pct) >= 3) dicas.push([pct > 0 ? "📈" : "📉", `Nas últimas 4 semanas você vendeu <b>${Math.abs(pct)}% ${pct > 0 ? "mais" : "menos"}</b> que nas 4 anteriores.`]);
-    }
+    // o que os números mostram
+    const dicas = CC.insights({ semanas, diario, config, desde }).lista.map(i => [i.emoji, i.texto]);
     html += `<div class="cartao"><div class="titulo-cartao"><span class="emoji">💡</span>O que os números mostram</div>
       ${dicas.map(([e, t]) => `<div class="dica-linha"><span class="emoji">${e}</span><span>${t}</span></div>`).join("")}</div>`;
     html += `</div><div class="grade">`;
@@ -550,6 +552,13 @@
         <p>Já tem vendas anotadas num caderno ou planilha? Coloque aqui para o app acertar mais desde o começo.</p>
         <button class="botao" data-acao="ir-historico">📥 Colocar meu histórico</button></div>
       <div class="grade">
+      <div class="cartao"><div class="titulo-cartao"><span class="emoji">📍</span>Onde fica sua banca</div>
+        <p><b>${esc(config.local.nome)}</b>${config.local.cidade && config.local.cidade !== config.local.nome ? ` · ${esc(config.local.cidade)}` : ""}${config.local.uf ? ` – ${config.local.uf}` : ""}</p>
+        <p class="nota">Define a previsão do tempo e os feriados.${(config.diasEspeciais || []).length ? ` ${config.diasEspeciais.length} dias especiais cadastrados.` : ""}</p>
+        <button class="botao secundario" data-acao="ir-local">📍 Mudar lugar e feriados</button></div>
+      <div class="cartao"><div class="titulo-cartao"><span class="emoji">📝</span>Anotar vendas do dia</div>
+        ${escolha("anotar-diario", [["sim", "Mostrar no início"], ["nao", "Não quero anotar"]], config.anotarDiario === false ? "nao" : "sim")}
+        <p class="nota">É opcional. O pedido funciona só com as perguntas de segunda. Anotando o dia a dia, a previsão fica mais certa.</p></div>
       <div class="cartao"><div class="titulo-cartao"><span class="emoji">🔠</span>Tamanho da letra</div>
         ${escolha("letra", [["1", "Normal", "A"], ["1.15", "Grande", "A+"], ["1.3", "Maior", "A++"]], String(config.letra || 1))}
         <p class="nota">Muda na hora. Escolha o que for mais fácil de ler.</p></div>
@@ -725,6 +734,85 @@
   }
 
   // =====================================================================
+  // ONDE FICA A BANCA — previsão do tempo, feriados e dias especiais
+  // =====================================================================
+  function telaLocal() {
+    const c = Dados.config(), l = c.local, res = estado.resultadosLocal;
+    const especiais = c.diasEspeciais || [];
+    return `<div class="estreito">
+      <button class="link-botao voltar-link" data-acao="ir-ajustes">← Voltar aos ajustes</button>
+      <h1>Onde fica sua banca</h1>
+      <div class="cartao sucesso"><div class="titulo-cartao"><span class="emoji">📍</span>${esc(l.nome)}</div>
+        <p style="margin:0">${esc(l.cidade || "")}${l.uf ? ` – ${l.uf}` : ""}</p></div>
+
+      <div class="cartao"><div class="titulo-cartao">Mudar o lugar</div>
+        <button class="botao" data-acao="local-gps">📍 Usar minha localização</button>
+        <p class="nota">Melhor fazer isso estando na banca. O celular vai pedir permissão.</p>
+        <div class="campo" style="margin-top:18px"><label for="busca-local">Ou digite o nome da cidade</label>
+          <input id="busca-local" class="grande-select" type="search" placeholder="Ex.: Salvador" value="${esc(estado.buscaLocal || "")}" enterkeyhint="search" autocomplete="off"></div>
+        <button class="botao secundario" data-acao="buscar-local">🔍 Buscar</button>
+        ${res ? (res.length ? `<div class="opcoes-local">${res.map((r, i) =>
+            `<button type="button" class="opcao-local" data-acao="escolher-local" data-i="${i}"><b>${esc(r.name)}</b><span>${esc([r.admin1, r.country].filter(Boolean).join(", "))}</span></button>`).join("")}</div>`
+          : `<p class="nota">Não achei nenhum lugar com esse nome. Confira a escrita.</p>`) : ""}
+      </div>
+
+      <div class="cartao">
+        <div class="campo"><label for="apelido-local">Nome da banca ou praia</label>
+          <input id="apelido-local" class="grande-select" type="text" value="${esc(l.nome)}" maxlength="40"></div>
+        <div class="campo"><label for="uf-local">Estado (para os feriados)</label>
+          <select id="uf-local" class="grande-select"><option value="">Fora do Brasil / não sei</option>${CC.SIGLAS_UF.map(u => `<option${u === l.uf ? " selected" : ""}>${u}</option>`).join("")}</select></div>
+        <button class="botao verde" data-acao="salvar-local">💾 Salvar</button>
+      </div>
+
+      <div class="cartao"><div class="titulo-cartao"><span class="emoji">🎉</span>Feriados e dias especiais</div>
+        <p>Os feriados nacionais${l.uf ? ` e do estado (${l.uf})` : ""} já estão no app. Coloque aqui os <b>feriados da sua cidade</b> e dias de <b>festa, show ou evento</b> perto da banca. Nesses dias o app conta venda de domingo.</p>
+        ${especiais.map((d, i) => `<div class="linha"><span>${d.todoAno ? `${CC.dataCurta(d.data)} · todo ano` : `${CC.dataCurta(d.data)}/${d.data.slice(0, 4)}`}<br><b class="nome-especial">${esc(d.nome)}</b></span>
+          <button class="botao-icone" data-acao="apagar-dia-especial" data-i="${i}" aria-label="Apagar ${esc(d.nome)}">🗑️</button></div>`).join("")}
+        <div class="campo" style="margin-top:14px"><label for="data-especial">Dia</label><input id="data-especial" type="date" class="grande-select"></div>
+        <div class="campo"><label for="nome-especial">Nome</label><input id="nome-especial" type="text" class="grande-select" placeholder="Ex.: Aniversário da cidade" maxlength="40"></div>
+        <div class="campo"><span class="pergunta">Repete todo ano?</span>${escolha("todo-ano", [["sim", "Sim"], ["nao", "Só esse ano"]], "sim")}</div>
+        <button class="botao secundario" data-acao="add-dia-especial">➕ Adicionar dia</button>
+      </div></div>`;
+  }
+
+  function salvarLocal(local) {
+    Dados.salvarConfig(Object.assign(Dados.config(), { local }));
+    estado.resultadosLocal = null;
+    avisar(`Banca em ${local.nome}`);
+    mostrar("local", { topo: false });
+    atualizarClima(true);
+  }
+  async function buscarLocal() {
+    const q = $("busca-local").value.trim();
+    estado.buscaLocal = q;
+    if (!q) return;
+    try {
+      const r = await fetch(`https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(q)}&count=6&language=pt&format=json`,
+        { signal: AbortSignal.timeout(8000) });
+      const j = await r.json();
+      estado.resultadosLocal = j.results || [];
+    } catch (e) { avisar("Sem internet. Tente de novo."); return; }
+    mostrar("local", { topo: false });
+  }
+  function localPorGps() {
+    if (!navigator.geolocation) { avisar("Este celular não deu a localização. Digite a cidade."); return; }
+    avisar("Procurando sua localização…");
+    navigator.geolocation.getCurrentPosition(async pos => {
+      const lat = Math.round(pos.coords.latitude * 1000) / 1000, lon = Math.round(pos.coords.longitude * 1000) / 1000;
+      let cidade = null, uf = null;
+      try { // nome do lugar a partir das coordenadas
+        const r = await fetch(`https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=${lat}&longitude=${lon}&localityLanguage=pt`,
+          { signal: AbortSignal.timeout(8000) });
+        const j = await r.json();
+        cidade = j.city || j.locality || null;
+        const cod = j.principalSubdivisionCode || "";
+        uf = cod.startsWith("BR-") ? cod.slice(3) : null;
+      } catch (e) { /* sem nome: fica só com as coordenadas */ }
+      salvarLocal({ nome: cidade || "Minha banca", cidade, uf, lat, lon });
+    }, () => avisar("Não consegui a localização. Digite a cidade."), { timeout: 15000, enableHighAccuracy: false });
+  }
+
+  // =====================================================================
   // NAVEGAÇÃO E AÇÕES
   // =====================================================================
   function novoPedido() {
@@ -733,13 +821,13 @@
     estado.passo = 0;
   }
 
-  const TELAS = { inicio: telaInicio, pedido: telaPedido, relatorio: telaRelatorio, ajustes: telaAjustes, historico: telaHistorico };
+  const TELAS = { inicio: telaInicio, pedido: telaPedido, relatorio: telaRelatorio, ajustes: telaAjustes, historico: telaHistorico, local: telaLocal };
 
   function mostrar(tela, { topo = true } = {}) {
     estado.tela = tela;
     conteudo.innerHTML = `<div class="entrar">${TELAS[tela]()}</div>`;
     document.querySelectorAll(".abas button").forEach(b => {
-      const aba = tela === "historico" ? "ajustes" : tela;
+      const aba = tela === "historico" || tela === "local" ? "ajustes" : tela;
       if (b.dataset.tela === aba) b.setAttribute("aria-current", "page"); else b.removeAttribute("aria-current");
     });
     if (topo) window.scrollTo(0, 0);
@@ -765,6 +853,40 @@
     },
     calcular,
     "ir-historico": () => mostrar("historico"),
+    "ir-relatorio": () => mostrar("relatorio"),
+    "ir-local": () => { estado.resultadosLocal = null; mostrar("local"); },
+    "buscar-local": buscarLocal,
+    "local-gps": localPorGps,
+    "escolher-local": b => {
+      const r = estado.resultadosLocal[Number(b.dataset.i)];
+      salvarLocal({ nome: r.name, cidade: r.name, uf: r.country_code === "BR" ? CC.ufDoEstado(r.admin1) : null,
+        lat: Math.round(r.latitude * 1000) / 1000, lon: Math.round(r.longitude * 1000) / 1000 });
+    },
+    "salvar-local": () => {
+      const c = Dados.config();
+      const nome = $("apelido-local").value.trim() || c.local.cidade || "Minha banca";
+      Dados.salvarConfig(Object.assign(c, { local: Object.assign(c.local, { nome, uf: $("uf-local").value || null }) }));
+      avisar("Salvo");
+      mostrar("local", { topo: false });
+    },
+    "add-dia-especial": () => {
+      const data = $("data-especial").value, nome = $("nome-especial").value.trim();
+      if (!data || !nome) { avisar("Coloque o dia e o nome"); return; }
+      const c = Dados.config();
+      c.diasEspeciais = (c.diasEspeciais || []).concat({ data, nome, todoAno: valorEscolha("todo-ano") === "sim" })
+        .sort((a, b) => a.data.slice(5).localeCompare(b.data.slice(5)));
+      Dados.salvarConfig(c);
+      avisar(`${nome} adicionado`);
+      mostrar("local", { topo: false });
+    },
+    "apagar-dia-especial": b => {
+      const c = Dados.config();
+      const d = c.diasEspeciais[Number(b.dataset.i)];
+      if (!d || !confirm(`Apagar ${d.nome}?`)) return;
+      c.diasEspeciais.splice(Number(b.dataset.i), 1);
+      Dados.salvarConfig(c);
+      mostrar("local", { topo: false });
+    },
     "ir-ajustes": () => mostrar("ajustes"),
     "modo-hist": b => { estado.modoHist = b.dataset.modo; estado.leitura = null; mostrar("historico", { topo: false }); },
     "salvar-dia-hist": () => {
@@ -890,6 +1012,10 @@
         estado.textoPlanilha = $("texto-planilha").value;
         mostrar("historico", { topo: false });
       }
+      if (opcao.parentElement.dataset.grupo === "anotar-diario") {
+        Dados.salvarConfig(Object.assign(Dados.config(), { anotarDiario: opcao.dataset.valor === "sim" }));
+        avisar(opcao.dataset.valor === "sim" ? "A anotação aparece no início" : "Pronto, sem anotação diária");
+      }
       if (opcao.parentElement.dataset.grupo === "letra") {
         Dados.salvarConfig(Object.assign(Dados.config(), { letra: Number(opcao.dataset.valor) }));
         aplicarLetra();
@@ -901,6 +1027,7 @@
   });
   document.addEventListener("keydown", e => {
     if (e.key === "Enter" && e.target.id === "resposta") { e.preventDefault(); avancar(); }
+    if (e.key === "Enter" && e.target.id === "busca-local") { e.preventDefault(); buscarLocal(); }
   });
   document.addEventListener("input", e => {
     if (!e.target.matches(".contador input")) return;
@@ -944,6 +1071,7 @@
   }
 
   // ---------- começo ----------
+  Dados.aplicarLocal();
   aplicarLetra();
   const nomeData = new Date().toLocaleDateString("pt-BR", { weekday: "long", day: "numeric", month: "long" });
   $("data-hoje").textContent = nomeData.charAt(0).toUpperCase() + nomeData.slice(1);

@@ -30,14 +30,62 @@
     const mes = Math.floor((h + l - 7 * m + 114) / 31), dia = ((h + l - 7 * m + 114) % 31) + 1;
     return iso(new Date(ano, mes - 1, dia));
   }
-  const FERIADOS_FIXOS = {
-    "01-01": "Ano Novo", "03-19": "São José", "03-25": "Data Magna do Ceará", "04-21": "Tiradentes",
-    "05-01": "Dia do Trabalho", "08-15": "Nossa Senhora da Assunção", "09-07": "Independência",
+  const FERIADOS_NACIONAIS = {
+    "01-01": "Ano Novo", "04-21": "Tiradentes", "05-01": "Dia do Trabalho", "09-07": "Independência",
     "10-12": "Nossa Senhora Aparecida", "11-02": "Finados", "11-15": "Proclamação da República",
     "11-20": "Consciência Negra", "12-25": "Natal",
   };
+  // Feriados estaduais de data fixa (os que mudam de data todo ano ficam de fora).
+  const FERIADOS_ESTADUAIS = {
+    AC: { "01-23": "Dia do Evangélico", "06-15": "Aniversário do Acre", "09-05": "Dia da Amazônia", "11-17": "Tratado de Petrópolis" },
+    AL: { "06-24": "São João", "06-29": "São Pedro", "09-16": "Emancipação de Alagoas" },
+    AP: { "03-19": "São José", "09-13": "Criação do Amapá" },
+    AM: { "09-05": "Elevação do Amazonas" },
+    BA: { "07-02": "Independência da Bahia" },
+    CE: { "03-19": "São José", "03-25": "Data Magna do Ceará" },
+    DF: { "11-30": "Dia do Evangélico" },
+    MA: { "07-28": "Adesão do Maranhão" },
+    MS: { "10-11": "Criação de Mato Grosso do Sul" },
+    PA: { "08-15": "Adesão do Pará" },
+    PB: { "08-05": "Fundação da Paraíba" },
+    PE: { "03-06": "Revolução Pernambucana" },
+    PI: { "10-19": "Dia do Piauí" },
+    PR: { "12-19": "Emancipação do Paraná" },
+    RJ: { "04-23": "São Jorge" },
+    RN: { "10-03": "Mártires de Cunhaú e Uruaçu" },
+    RO: { "01-04": "Criação de Rondônia", "06-18": "Dia do Evangélico" },
+    RR: { "10-05": "Criação de Roraima" },
+    RS: { "09-20": "Revolução Farroupilha" },
+    SE: { "07-08": "Emancipação de Sergipe" },
+    SP: { "07-09": "Revolução Constitucionalista" },
+    TO: { "09-08": "Nossa Senhora da Natividade", "10-05": "Criação do Tocantins" },
+  };
+  const FERIADOS_MUNICIPAIS = { "fortaleza|CE": { "08-15": "Nossa Senhora da Assunção" } };
+  const UFS = {
+    "acre": "AC", "alagoas": "AL", "amapa": "AP", "amazonas": "AM", "bahia": "BA", "ceara": "CE",
+    "distrito federal": "DF", "espirito santo": "ES", "goias": "GO", "maranhao": "MA", "mato grosso": "MT",
+    "mato grosso do sul": "MS", "minas gerais": "MG", "para": "PA", "paraiba": "PB", "parana": "PR",
+    "pernambuco": "PE", "piaui": "PI", "rio de janeiro": "RJ", "rio grande do norte": "RN",
+    "rio grande do sul": "RS", "rondonia": "RO", "roraima": "RR", "santa catarina": "SC",
+    "sao paulo": "SP", "sergipe": "SE", "tocantins": "TO",
+  };
+  const semAcento = t => String(t || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim();
+  function ufDoEstado(nome) { return UFS[semAcento(nome)] || null; }
+
+  // Onde fica a banca: decide feriados estaduais/municipais e os dias especiais do vendedor.
+  // extras: {"AAAA-MM-DD": nome} para um dia só, {"MM-DD": nome} para todo ano.
+  let LOCAL = { uf: "CE", cidade: "Fortaleza", extras: {} };
+  function definirLocal({ uf = null, cidade = null, extras = {} } = {}) { LOCAL = { uf, cidade, extras }; }
+
   function feriado(s) {
-    if (FERIADOS_FIXOS[s.slice(5)]) return FERIADOS_FIXOS[s.slice(5)];
+    const md = s.slice(5);
+    if (LOCAL.extras[s]) return LOCAL.extras[s];
+    if (LOCAL.extras[md]) return LOCAL.extras[md];
+    if (FERIADOS_NACIONAIS[md]) return FERIADOS_NACIONAIS[md];
+    const est = FERIADOS_ESTADUAIS[LOCAL.uf];
+    if (est && est[md]) return est[md];
+    const mun = FERIADOS_MUNICIPAIS[semAcento(LOCAL.cidade) + "|" + LOCAL.uf];
+    if (mun && mun[md]) return mun[md];
     const p = pascoa(Number(s.slice(0, 4)));
     if (s === somaDias(p, -48) || s === somaDias(p, -47)) return "Carnaval";
     if (s === somaDias(p, -2)) return "Sexta-feira Santa";
@@ -197,6 +245,67 @@
     };
   }
 
+  // O que os números mostram: frases curtas, da mais importante para a menos importante.
+  function insights({ semanas = [], diario = [], config, desde = null }) {
+    const rel = relatorio({ semanas, diario, config, desde });
+    const lista = [];
+    const add = (peso, emoji, texto) => lista.push({ peso, emoji, texto });
+    const n = rel.numSemanas;
+
+    if (rel.faltas) add(90, "⚠️", `Faltou coco em <b>${rel.faltas} ${rel.faltas === 1 ? "semana" : "semanas"}</b>. Depois de uma falta, o app pede ${MARGEM_SE_FALTOU}% a mais.`);
+    if (rel.estragados && n) {
+      const porSemana = rel.estragados / n;
+      const ano = Math.round(rel.perdaEstragados / n * 52);
+      add(porSemana > 8 ? 85 : 30, "🗑️", `Estragam uns <b>${Math.round(porSemana)} cocos por semana</b>. Em um ano, isso dá <b>${reais(ano)}</b> jogados fora.${porSemana > 8 ? " Guarde os cocos na sombra e venda os mais antigos primeiro." : ""}`);
+    }
+    const vs = semanas.filter(r => r.vendas != null).map(r => r.vendas);
+    if (vs.length >= 8) {
+      const a = vs.slice(-4).reduce((x, y) => x + y, 0), b = vs.slice(-8, -4).reduce((x, y) => x + y, 0);
+      const pct = Math.round((a - b) / b * 100);
+      if (Math.abs(pct) >= 3) add(Math.abs(pct) >= 10 ? 70 : 35, pct > 0 ? "📈" : "📉", `Nas últimas 4 semanas você vendeu <b>${Math.abs(pct)}% ${pct > 0 ? "mais" : "menos"}</b> que nas 4 anteriores.`);
+    }
+    const comDia = rel.porDia.map((v, w) => [v, w]).filter(([v]) => v != null);
+    if (comDia.length >= 5) {
+      const [mv, mw] = comDia.reduce((a, b) => (b[0] > a[0] ? b : a));
+      const [pv, pw] = comDia.reduce((a, b) => (b[0] < a[0] ? b : a));
+      add(60, "🏆", `<b>${NOMES_DIAS[mw]}</b> é seu melhor dia: vende uns ${mv} cocos. O mais fraco é ${NOMES_DIAS[pw].toLowerCase()}, com ${pv}.`);
+    }
+    if (comDia.length === 7) {
+      const total = comDia.reduce((a, [v]) => a + v, 0);
+      const fds = Math.round((rel.porDia[0] + rel.porDia[6]) / total * 100);
+      add(50, "🏖️", `Sábado e domingo trazem <b>${fds}%</b> das suas vendas da semana.`);
+    }
+    // Feriado em dia útil comparado ao mesmo dia da semana comum
+    const dd = diario.filter(r => (!desde || r.data >= desde) && Number.isFinite(r.vendidos));
+    const razoesFeriado = dd.filter(r => feriado(r.data) && diaSemana(r.data) >= 1 && diaSemana(r.data) <= 5 && rel.porDia[diaSemana(r.data)])
+      .map(r => r.vendidos / rel.porDia[diaSemana(r.data)]);
+    if (razoesFeriado.length) {
+      const x = media(razoesFeriado);
+      if (x >= 1.3) add(55, "🎉", `Em feriado você vende cerca de <b>${x.toFixed(1).replace(".", ",")} vezes</b> o de um dia comum. O app já conta isso.`);
+    }
+    if (rel.fatorChuva.aprendido) add(50, "🌧️", `Em dia de chuva você vende cerca de <b>${Math.round((1 - rel.fatorChuva.fator) * 100)}% menos</b>. Quando a previsão é de chuva, o app pede menos.`);
+    // Acerto da previsão: o previsto num pedido contra o vendido na semana seguinte (sem semanas de falta)
+    const erros = [];
+    for (let i = 0; i + 1 < semanas.length; i++) {
+      const a = semanas[i], b = semanas[i + 1];
+      if (a.previsto == null || b.vendas == null || b.faltou || b.importado || (desde && b.data < desde)) continue;
+      erros.push({ abs: Math.abs(b.vendas - a.previsto), base: b.vendas });
+    }
+    if (erros.length >= 2) {
+      const e = Math.round(media(erros.map(x => x.abs)));
+      const p = Math.round(100 * erros.reduce((s, x) => s + x.abs, 0) / erros.reduce((s, x) => s + x.base, 0));
+      add(45, "🎯", `A previsão do app errou, em média, <b>${e} cocos por semana</b> (${p}%).${p <= 10 ? " Está acertando bem." : " Anotar as vendas do dia ajuda a acertar mais."}`);
+    }
+    if (n) add(40, "💰", `Sobram em média <b>${reais(Math.round(rel.lucro / n))} por semana</b> depois de pagar os cocos.`);
+    const comVenda = rel.semanas.filter(r => r.vendas != null);
+    if (comVenda.length >= 4) {
+      const melhor = comVenda.reduce((a, b) => (b.vendas > a.vendas ? b : a));
+      add(25, "⭐", `Sua melhor semana foi a do pedido de ${dataCurta(melhor.data)}, com <b>${melhor.vendas} cocos</b>.`);
+    }
+    if (n >= 3 && !rel.faltas) add(20, "👏", `${rel.noPonto} de ${n} semanas ficaram no ponto: sem faltar coco e quase sem estragar.`);
+    return { rel, lista: lista.sort((a, b) => b.peso - a.peso) };
+  }
+
   function reais(centavos) {
     return (centavos / 100).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
   }
@@ -205,8 +314,9 @@
     MARGEM_NORMAL, MARGEM_SE_FALTOU, SEMANAS_PARA_USAR_HISTORICO, SEMANAS_NA_MEDIA,
     FATOR_CHUVA_PADRAO, FATOR_FERIAS, CHANCE_DE_CHUVA, NOMES_DIAS, DIAS_CURTOS,
     iso, deIso, somaDias, diaSemana, segundaDaSemana, dataCurta, pascoa, feriado, ferias,
+    definirLocal, ufDoEstado, semAcento, SIGLAS_UF: Object.values(UFS).sort(),
     demandaPorEstimativa, vendasDaSemana, demandaPorHistorico, calcularPedido,
-    aprenderFatorChuva, preverSemana, relatorio, reais,
+    aprenderFatorChuva, preverSemana, relatorio, insights, reais,
   };
   if (typeof module !== "undefined") module.exports = CC; else raiz.CC = CC;
 })(this);

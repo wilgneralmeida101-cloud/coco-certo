@@ -1,5 +1,5 @@
 // Guarda os arquivos do app no celular para funcionar sem internet.
-const VERSAO = "coco-certo-v5";
+const VERSAO = "coco-certo-v6";
 const ARQUIVOS = ["./", "index.html", "estilo.css", "calculo.js", "dados.js", "app.js",
   "manifest.webmanifest", "icone.svg", "icone-192.png", "icone-512.png"];
 

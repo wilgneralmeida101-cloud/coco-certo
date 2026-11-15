@@ -8,7 +8,8 @@
     config: "coco-certo-config",
     clima: "coco-certo-clima",
   };
-  const CONFIG_PADRAO = { precoCentavos: 700, custoCentavos: 250 };
+  const LOCAL_PADRAO = { nome: "Praia do Futuro", cidade: "Fortaleza", uf: "CE", lat: -3.74, lon: -38.45 };
+  const CONFIG_PADRAO = { precoCentavos: 700, custoCentavos: 250, local: LOCAL_PADRAO, diasEspeciais: [] };
 
   function ler(chave, padrao) {
     try { const v = JSON.parse(localStorage.getItem(chave)); return v ?? padrao; } catch (e) { return padrao; }
@@ -21,7 +22,14 @@
     diario: () => { const v = ler(CHAVES.diario, []); return Array.isArray(v) ? v : []; },
     salvarDiario: v => gravar(CHAVES.diario, v.slice().sort((a, b) => a.data.localeCompare(b.data))),
     config: () => Object.assign({}, CONFIG_PADRAO, ler(CHAVES.config, {})),
-    salvarConfig: v => gravar(CHAVES.config, v),
+    salvarConfig: v => { gravar(CHAVES.config, v); Dados.aplicarLocal(); },
+    // Passa o lugar da banca e os dias especiais para as regras de feriado.
+    aplicarLocal() {
+      const c = Dados.config();
+      const extras = {};
+      (c.diasEspeciais || []).forEach(d => { extras[d.todoAno ? d.data.slice(5) : d.data] = d.nome; });
+      CC.definirLocal({ uf: c.local.uf, cidade: c.local.cidade, extras });
+    },
     clima: () => ler(CHAVES.clima, null),
     salvarClima: v => gravar(CHAVES.clima, v),
 
